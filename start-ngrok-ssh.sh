@@ -2,33 +2,39 @@
 echo "=== Bắt đầu dịch vụ SSH ==="
 service ssh start
 
-# Kiểm tra biến môi trường NGROK_AUTH_TOKEN
 if [ -z "$NGROK_AUTH_TOKEN" ]; then
-  echo "⚠️  Không tìm thấy biến môi trường NGROK_AUTH_TOKEN!"
-  echo "➡️  Hãy thêm token vào môi trường container hoặc Render dashboard (Environment Variables)."
+  echo "⚠️  Không tìm thấy NGROK_AUTH_TOKEN!"
   exit 1
 fi
 
-# Đăng nhập vào Ngrok bằng token môi trường
 ngrok config add-authtoken "$NGROK_AUTH_TOKEN"
 
-# Tạo tunnel TCP (port 22)
 echo "=== Khởi tạo Ngrok TCP tunnel ==="
 nohup ngrok tcp 22 --region ap > ngrok.log 2>&1 &
 
-# Chờ Ngrok khởi động
-sleep 5
+# ✅ Chờ động thay vì sleep cố định
+echo "Đang chờ Ngrok khởi động..."
+for i in $(seq 1 20); do
+  sleep 2
+  TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null)
+  
+  if [ -n "$TUNNEL_URL" ]; then
+    break
+  fi
+  echo "  Thử lần $i/20..."
+done
 
-# Hiển thị thông tin kết nối SSH
-echo "=== Thông tin SSH của bạn ==="
-TUNNEL_URL=$(curl -s localhost:4040/api/tunnels | grep -Eo "tcp://[0-9a-zA-Z\.-]+:[0-9]+")
+echo "=== Thông tin SSH ==="
 if [ -n "$TUNNEL_URL" ]; then
-  echo "Kết nối SSH qua: $TUNNEL_URL"
-  echo "Ví dụ: ssh user@$(echo $TUNNEL_URL | sed 's#tcp://##')"
+  HOST=$(echo "$TUNNEL_URL" | sed 's#tcp://##' | cut -d: -f1)
+  PORT=$(echo "$TUNNEL_URL" | sed 's#tcp://##' | cut -d: -f2)
+  echo "✅ Tunnel: $TUNNEL_URL"
+  echo "➡️  Lệnh SSH: ssh -p $PORT user@$HOST"
 else
-  echo "⚠️  Không lấy được tunnel, kiểm tra log ngrok.log."
+  echo "⚠️  Không lấy được tunnel. Nội dung ngrok.log:"
+  cat ngrok.log
 fi
 
-# Giữ container chạy bằng web service dummy
-echo "=== Giữ container hoạt động bằng web service ảo (port 8080) ==="
+echo "=== Giữ container hoạt động ==="
 python3 -m http.server 8080
